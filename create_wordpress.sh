@@ -40,7 +40,7 @@ create_containers() {
     fi
 
     # Create a new WordPress container
-    docker run -e WORDPRESS_DB_HOST=$MARIADB_CONTAINER -e WORDPRESS_DB_NAME=$DB_NAME -e WORDPRESS_DB_USER=root -e WORDPRESS_DB_PASSWORD=$DB_PASSWORD -e WORDPRESS_TABLE_PREFIX=wp2_ --name $CONTAINER_NAME --network $WORDPRESS_NETWORK -v "$PWD/html1":/var/www/html -d wordpress
+    docker run -e WORDPRESS_DB_HOST=$MARIADB_CONTAINER -e WORDPRESS_DB_NAME=$DB_NAME -e WORDPRESS_DB_USER=root -e WORDPRESS_DB_PASSWORD=$DB_PASSWORD -e WORDPRESS_TABLE_PREFIX=wp2_ --name $CONTAINER_NAME --network $WORDPRESS_NETWORK -v "$PWD/html_$CONTAINER_NAME":/var/www/html -d wordpress
 
     # Fetch and print the IP address of the new WordPress container
     IP_ADDRESS=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $CONTAINER_NAME)
@@ -101,17 +101,25 @@ server {
 ls_containers() {
     echo "Container Name | Domain Name | IP Address"
     echo "---------------|-------------|-----------"
+    shopt -s nullglob
     for config in "$NGINX_SITES_ENABLED_DIR"/*.conf; do
-        domain=$(basename "$config" .conf)
-        container_name=$(grep "proxy_pass http://" "$config" | head -n1 | awk -F'//' '{print $2}' | awk -F':' '{print $1}')
-        ip_address=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name")
-        echo "$container_name | $domain | $ip_address"
+        if [ -f "$config" ]; then
+            domain=$(basename "$config" .conf)
+            container_name=$(grep "proxy_pass http://" "$config" | head -n1 | awk -F'//' '{print $2}' | awk -F':' '{print $1}')
+            if [ -n "$container_name" ]; then
+                ip_address=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name" 2>/dev/null)
+                echo "$container_name | $domain | ${ip_address:-N/A}"
+            else
+                echo "N/A | $domain | N/A"
+            fi
+        fi
     done
+    shopt -u nullglob
 }
 
 # Function to remove containers and configurations
 remove_containers() {
-    # Remove the WordPress container
+    # Stop and remove the WordPress container
     docker stop "$CONTAINER_NAME"
     docker rm "$CONTAINER_NAME"
 
@@ -119,31 +127,21 @@ remove_containers() {
     docker exec $MARIADB_CONTAINER mariadb -uroot -p$DB_PASSWORD -e "DROP DATABASE IF EXISTS $CONTAINER_NAME;"
 
     # Remove the Nginx configuration
-    sudo rm "$NGINX_SITES_ENABLED_DIR/$CONTAINER_NAME.conf"
+    sudo rm "$NGINX_SITES_ENABLED_DIR/$DOMAIN_NAME.conf"
+
+    # Remove Let's Encrypt certificates and renewal configurations
+    sudo rm "/etc/letsencrypt/renewal/$DOMAIN_NAME.conf" 2>/dev/null
+    sudo rm -r "/etc/letsencrypt/live/$DOMAIN_NAME" 2>/dev/null
+    sudo rm -r "/etc/letsencrypt/archive/$DOMAIN_NAME" 2>/dev/null
 
     # Reload Nginx to apply changes
     sudo nginx -s reload
 
-    echo "Container and configurations removed for $CONTAINER_NAME"
+    echo "Container, database, Nginx configuration, and SSL certificates removed for $DOMAIN_NAME"
 }
 
-# Check if the container name was provided for remove operation
-if [ "$1" == "--rm" ] && [ -z "$CONTAINER_NAME" ]; then
-    usage
-    exit 0
-fi
-
-# For the create operation
-if [ "$1" == "--create" ]; then
-    # Check if the container and domain names were provided
-    if [ -z "$CONTAINER_NAME" ] || [ -z "$DOMAIN_NAME" ]; then
-        usage
-        exit 0
-    fi
-fi
-
 # Check for no arguments or --help argument
-if [ "$#" -eq 0 ] || [ "$1" == "--help" ]; then
+if [ "$#" -eq 0 ]; then
     usage
     exit 0
 fi
@@ -151,12 +149,28 @@ fi
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --create) shift; create_containers ;;
-        --ls) ls_containers; exit ;;
-        --rm) shift; remove_containers; exit ;;
+        --create) shift; CREATE_FLAG=true ;;
+        --ls) ls_containers; exit 0 ;;
+        --rm) shift; REMOVE_FLAG=true ;;
         -c) CONTAINER_NAME="$2"; shift ;;
         -d) DOMAIN_NAME="$2"; shift ;;
-        *) usage ;;
+        --help) usage; exit 0 ;;
+        *) usage; exit 1 ;;
     esac
     shift
 done
+
+# Execute actions based on flags and arguments
+if [ "$CREATE_FLAG" = true ]; then
+    if [ -z "$CONTAINER_NAME" ] || [ -z "$DOMAIN_NAME" ]; then
+        usage
+        exit 0
+    fi
+    create_containers
+elif [ "$REMOVE_FLAG" = true ]; then
+    if [ -z "$CONTAINER_NAME" ]; then
+        usage
+        exit 0
+    fi
+    remove_containers
+fi
