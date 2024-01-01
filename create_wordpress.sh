@@ -155,14 +155,12 @@ while [[ "$#" -gt 0 ]]; do
         -c) CONTAINER_NAME="$2"; shift ;;
         -d) DOMAIN_NAME="$2"; shift ;;
         --help) usage; exit 0 ;;
-        *) usage; exit 1 ;;
     esac
     shift
 done
-
 # Execute actions based on flags and arguments
 if [ "$CREATE_FLAG" = true ]; then
-    if [ -z "$CONTAINER_NAME" ] || [ -z "$DOMAIN_NAME" ]; then
+    if [ -z "$CONTAINER_NAME" ] && [ -z "$DOMAIN_NAME" ]; then
         usage
         exit 0
     fi
