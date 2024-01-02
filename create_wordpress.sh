@@ -27,6 +27,7 @@ create_containers() {
             # cleanup
             sudo docker rm $MARIADB_CONTAINER
         fi
+
         # run your container
         sudo docker run -e MYSQL_ROOT_PASSWORD=$DB_PASSWORD -e MYSQL_DATABASE=$DB_NAME --name $MARIADB_CONTAINER --network $WORDPRESS_NETWORK -v "$PWD/database":/var/lib/mysql -d mariadb:latest
 
@@ -59,29 +60,11 @@ create_containers() {
 generate_nginx_config() {
     NGINX_CONFIG="
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name $DOMAIN_NAME;
     
     # Proxy configuration
-    location / {
-        proxy_pass http://$IP_ADDRESS:80;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header Host \$host;
-    }
-}
-server {
-    listen 443 ssl;
-    server_name $DOMAIN_NAME;
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem;
-    # Include SSL configuration from certbot
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-    
-    # SSL Proxy configuration
     location / {
         proxy_pass http://$IP_ADDRESS:80;
         proxy_set_header X-Real-IP \$remote_addr;
