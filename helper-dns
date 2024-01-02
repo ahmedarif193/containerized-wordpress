@@ -21,6 +21,7 @@ function ls_dns_records() {
 
 function attach_dns_records() {
     local DOMAIN_NAME=$1
+    local VM_NAME=$(curl "http://metadata.google.internal/computeMetadata/v1/instance/name" -H "Metadata-Flavor: Google")
     echo "Starting the process to attach DNS records for $DOMAIN_NAME..."
 
     # Generate a valid managed zone name by replacing invalid characters
@@ -30,7 +31,7 @@ function attach_dns_records() {
     # Check if the managed zone already exists
     if ! gcloud dns managed-zones describe $MANAGED_ZONE &> /dev/null; then
         echo "Managed zone $MANAGED_ZONE does not exist. Creating..."
-        gcloud dns managed-zones create $MANAGED_ZONE --dns-name="$DOMAIN_NAME." --description="Auto-managed zone for $DOMAIN_NAME"
+        gcloud dns managed-zones create $MANAGED_ZONE --dns-name="$DOMAIN_NAME." --description="Auto-managed for : $VM_NAME"
     else
         echo "Managed zone $MANAGED_ZONE already exists. Skipping creation."
     fi
