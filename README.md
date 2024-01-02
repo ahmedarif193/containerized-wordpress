@@ -1,7 +1,7 @@
 # WordPress Multi-Host Automation Script with DNS Management
 
 ## Overview
-This project offers a comprehensive automation solution for efficiently setting up and managing multiple WordPress sites, initially developed for Jojmagroup Holding. It includes scripts for automated WordPress deployment and DNS record management using Docker, Nginx, and Google Cloud DNS.
+This project provides a streamlined solution for deploying and managing multiple WordPress sites using Docker. It features a reverse proxy setup with Nginx for single IP management, shared MariaDB database usage, and automated DNS record management with Google Cloud DNS. This setup is ideal for efficiently managing multiple WordPress instances from a single VPS with ease and scalability.
 
 ## Features
 - **Automated WordPress and Database Container Creation**: Sets up WordPress instances with MariaDB databases using Docker.
