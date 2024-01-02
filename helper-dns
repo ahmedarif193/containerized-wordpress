@@ -1,0 +1,152 @@
+#!/bin/bash
+
+function ls_dns_records() {
+    local DOMAIN_NAME=$1
+
+    if [ -z "$DOMAIN_NAME" ]; then
+        echo "Listing all managed zones..."
+        gcloud dns managed-zones list
+    else
+        local MANAGED_ZONE=$(echo "${DOMAIN_NAME}-auto-managed" | sed 's/[^a-zA-Z0-9-]//g')
+        
+        if ! gcloud dns managed-zones describe $MANAGED_ZONE &> /dev/null; then
+            echo "Managed zone $MANAGED_ZONE does not exist. Cannot list records."
+            return 1
+        fi
+
+        echo "Listing DNS records for $DOMAIN_NAME..."
+        gcloud dns record-sets list --zone=$MANAGED_ZONE
+    fi
+}
+
+function attach_dns_records() {
+    local DOMAIN_NAME=$1
+    echo "Starting the process to attach DNS records for $DOMAIN_NAME..."
+
+    # Generate a valid managed zone name by replacing invalid characters
+    local MANAGED_ZONE=$(echo "${DOMAIN_NAME}-auto-managed" | sed 's/[^a-zA-Z0-9-]//g')
+    echo "Managed zone name generated: $MANAGED_ZONE"
+
+    # Check if the managed zone already exists
+    if ! gcloud dns managed-zones describe $MANAGED_ZONE &> /dev/null; then
+        echo "Managed zone $MANAGED_ZONE does not exist. Creating..."
+        gcloud dns managed-zones create $MANAGED_ZONE --dns-name="$DOMAIN_NAME." --description="Auto-managed zone for $DOMAIN_NAME"
+    else
+        echo "Managed zone $MANAGED_ZONE already exists. Skipping creation."
+    fi
+
+    # Fetching the current public IP address for the A record
+    echo "Fetching the current public IP address for the A record..."
+    local A_RECORD_IP=$(curl -s ipinfo.io/ip)
+    if [ -z "$A_RECORD_IP" ]; then
+        echo "Error: Failed to obtain the public IP address."
+        exit 1
+    fi
+    echo "Public IP Address obtained: $A_RECORD_IP"
+
+    # Start a transaction
+    echo "Starting a DNS transaction..."
+    gcloud dns record-sets transaction start --zone=$MANAGED_ZONE
+
+    # Add the A record for the domain
+    echo "Adding the A record for $DOMAIN_NAME..."
+    gcloud dns record-sets transaction add --name=$DOMAIN_NAME. --type=A --ttl=300 --zone=$MANAGED_ZONE "$A_RECORD_IP"
+
+    # Add the CNAME record for www
+    echo "Adding the CNAME record for www.$DOMAIN_NAME..."
+    gcloud dns record-sets transaction add --name=www.$DOMAIN_NAME. --type=CNAME --ttl=300 --zone=$MANAGED_ZONE "$DOMAIN_NAME."
+
+    # Execute the transaction
+    echo "Executing the DNS transaction..."
+    gcloud dns record-sets transaction execute --zone=$MANAGED_ZONE
+
+    echo "DNS records successfully added for $DOMAIN_NAME"
+}
+
+function detach_dns_records() {
+    local DOMAIN_NAME=$1
+    echo "Starting DNS record removal for $DOMAIN_NAME..."
+
+    local MANAGED_ZONE=$(echo "${DOMAIN_NAME}-auto-managed" | sed 's/[^a-zA-Z0-9-]//g')
+    echo "Managed zone: $MANAGED_ZONE"
+
+    if ! gcloud dns managed-zones describe $MANAGED_ZONE &> /dev/null; then
+        echo "Managed zone $MANAGED_ZONE does not exist. Nothing to remove."
+        return 1
+    fi
+
+    echo "Fetching records for $DOMAIN_NAME..."
+    local RECORDS=$(gcloud dns record-sets list --zone=$MANAGED_ZONE --format="json" | \
+    jq -r '.[] | select(.type != "NS" and .type != "SOA") | @base64')
+
+    if [ -z "$RECORDS" ]; then
+        echo "No records to remove."
+    else
+        echo "Starting the DNS transaction..."
+        gcloud dns record-sets transaction start --zone=$MANAGED_ZONE
+
+        echo "Removing records..."
+        echo "$RECORDS" | while IFS= read -r record_b64; do
+            local record=$(echo "$record_b64" | base64 --decode)
+            local name=$(echo "$record" | jq -r '.name')
+            local type=$(echo "$record" | jq -r '.type')
+            local ttl=$(echo "$record" | jq -r '.ttl')
+            local rrdata=$(echo "$record" | jq -r '.rrdatas[0]')
+            gcloud dns record-sets transaction remove --name="$name" --type="$type" --ttl="$ttl" --zone=$MANAGED_ZONE "$rrdata"
+        done
+
+        echo "Executing the DNS transaction..."
+        gcloud dns record-sets transaction execute --zone=$MANAGED_ZONE
+    fi
+
+    echo "Attempting to delete the managed zone..."
+    if gcloud dns managed-zones delete $MANAGED_ZONE --quiet; then
+        echo "Managed zone $MANAGED_ZONE successfully deleted."
+    else
+        echo "Failed to delete the managed zone $MANAGED_ZONE."
+    fi
+}
+
+# Define options
+TEMP=$(getopt -o d:a:r:l --long domain:,attach,detach,ls -- "$@")
+if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
+
+# Note the quotes around `$TEMP': they are essential!
+eval set -- "$TEMP"
+
+# Initialize variables
+ACTION=""
+DOMAIN_NAME=""
+
+# Extract options and their arguments into variables.
+while true ; do
+    case "$1" in
+        -d|--domain)
+            DOMAIN_NAME=$2 ; shift 2 ;;
+        -a|--attach)
+            ACTION="attach" ; shift ;;
+        -d|--detach)
+            ACTION="detach" ; shift ;;
+        -l|--ls)
+            ACTION="ls" ; shift ;;
+        --) shift ; break ;;
+        *) echo "Internal error!" ; exit 1 ;;
+    esac
+done
+
+# Determine action
+if [ "$ACTION" = "ls" ]; then
+    # If ACTION is 'ls' and no DOMAIN_NAME is specified, list all domains
+    ls_dns_records "$DOMAIN_NAME"
+elif [ -z "$DOMAIN_NAME" ]; then
+    echo "Usage: $0 [--attach|--detach -d [domain-name]] | [--ls [-d domain-name]]"
+    exit 1
+elif [ "$ACTION" = "attach" ]; then
+    attach_dns_records "$DOMAIN_NAME"
+elif [ "$ACTION" = "detach" ]; then
+    detach_dns_records "$DOMAIN_NAME"
+else
+    echo "No valid action specified. Use --attach, --detach, or --ls."
+fi
+
+#sudo apt-get install curl jq google-cloud-sdks
