@@ -79,20 +79,25 @@ server {
     echo "$NGINX_CONFIG" | sudo tee "$NGINX_SITES_ENABLED_DIR/$DOMAIN_NAME.conf" > /dev/null
 }
 
-# Function to list containers
 ls_containers() {
-    echo "Container Name | Domain Name | IP Address"
-    echo "---------------|-------------|-----------"
+    # Define headers
+    printf "%-20s | %-30s | %-15s\n" "Container Name" "Domain Name" "LAN IP Address"
+    printf "%-20s | %-30s | %-15s\n" "------------------" "------------------------------" "---------------"
+
     shopt -s nullglob
     for config in "$NGINX_SITES_ENABLED_DIR"/*.conf; do
         if [ -f "$config" ]; then
             domain=$(basename "$config" .conf)
-            container_name=$(grep "proxy_pass http://" "$config" | head -n1 | awk -F'//' '{print $2}' | awk -F':' '{print $1}')
+
+            container_ip=$(grep "proxy_pass http://" "$config" | head -n1 | awk -F'//' '{print $2}' | awk -F':' '{print $1}')
+            
+            # Find container name by matching IP address
+            container_name=$(sudo docker ps --format '{{.Names}}' | xargs -I {} sudo docker inspect --format '{{.Name}} {{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' {} | grep $container_ip | awk '{print $1}' | sed 's/^\/\([^ ]*\).*/\1/')
+            
             if [ -n "$container_name" ]; then
-                ip_address=$(sudo docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name" 2>/dev/null)
-                echo "$container_name | $domain | ${ip_address:-N/A}"
+                printf "%-20s | %-30s | %-15s\n" "$container_name" "$domain" "$container_ip"
             else
-                echo "N/A | $domain | N/A"
+                printf "%-20s | %-30s | %-15s\n" "N/A" "$domain" "N/A"
             fi
         fi
     done
