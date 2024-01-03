@@ -15,7 +15,7 @@ This project provides a streamlined solution for deploying and managing multiple
 ## Usage
 
 ### Setting Up the Scripts
-1. Ensure Docker, Docker Compose, Nginx, and Certbot are installed on your system.
+1. Ensure Docker, Docker Compose, Nginx, gcloud and Certbot are installed on your system.
 2. Clone this repository to your local machine or server.
 
 ### Running the Helper Scripts
