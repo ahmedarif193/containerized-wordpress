@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Check for required arguments
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <port> <rule-name>"
+    exit 1
+fi
+
+PORT=$1
+RULE_NAME=$2
+
+# Fetch the instance name and zone from the metadata server
+INSTANCE_NAME=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/name" -H "Metadata-Flavor: Google")
+INSTANCE_ZONE=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/zone" -H "Metadata-Flavor: Google" | awk -F/ '{print $4}')
+
+# Fetch the network name and target tag from the instance details
+NETWORK_NAME=$(gcloud compute instances describe "$INSTANCE_NAME" --zone "$INSTANCE_ZONE" --format="get(networkInterfaces[0].network)" | awk -F/ '{print $NF}')
+INSTANCE_TAGS=$(gcloud compute instances describe "$INSTANCE_NAME" --zone "$INSTANCE_ZONE" --format="get(tags.items)")
+
+# Assuming the first tag is the target tag
+TARGET_TAG=$(echo $INSTANCE_TAGS | awk '{print $1}')
+
+# Create a firewall rule to allow traffic on the specified port
+echo "Creating firewall rule..."
+gcloud compute firewall-rules create "$RULE_NAME" \
+    --allow tcp:"$PORT" \
+    --network "$NETWORK_NAME" \
+    --direction INGRESS \
+    --priority 1000 \
+    --target-tags "$TARGET_TAG"
+
+echo "Firewall rule created."
