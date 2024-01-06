@@ -18,42 +18,54 @@ usage() {
 }
 
 # Function to create containers and configurations
-create_containers() {
+create_container() {
     DB_NAME=$CONTAINER_NAME
+    echo "Initiating container creation process."
+
+    echo "Assigning container name to database name: $DB_NAME"
 
     # Check if the MariaDB container exists and create it if not
     if [ ! "$(sudo docker ps -q -f name=$MARIADB_CONTAINER)" ]; then
+        echo "No existing MariaDB container found."
+
         if [ "$(sudo docker ps -aq -f status=exited -f name=$MARIADB_CONTAINER)" ]; then
-            # cleanup
+            echo "Exited MariaDB container found. Proceeding with cleanup."
             sudo docker rm $MARIADB_CONTAINER
         fi
 
-        # run your container
+        echo "Creating and starting a new MariaDB container."
         sudo docker run -e MYSQL_ROOT_PASSWORD=$DB_PASSWORD -e MYSQL_DATABASE=$DB_NAME --name $MARIADB_CONTAINER --network $WORDPRESS_NETWORK -v "$PWD/database":/var/lib/mysql -d mariadb:latest
 
-        # Wait for MariaDB to start
-        echo "Waiting for MariaDB to start..."
+        echo "Waiting 10 seconds for MariaDB container to initialize."
         sleep 10
     else
-        # Create a new database in MariaDB
+        echo "MariaDB container already exists. Creating a new database inside it."
         sudo docker exec $MARIADB_CONTAINER mariadb -uroot -p$DB_PASSWORD -e "CREATE DATABASE $DB_NAME;"
     fi
 
-    # Create a new WordPress container
+    echo "Creating and starting new WordPress container."
     sudo docker run -e WORDPRESS_DB_HOST=$MARIADB_CONTAINER -e WORDPRESS_DB_NAME=$DB_NAME -e WORDPRESS_DB_USER=root -e WORDPRESS_DB_PASSWORD=$DB_PASSWORD -e WORDPRESS_TABLE_PREFIX=wp2_ --name $CONTAINER_NAME --network $WORDPRESS_NETWORK -v "$PWD/html_$CONTAINER_NAME":/var/www/html -d wordpress
-    echo "- docker run -e WORDPRESS_DB_HOST=$MARIADB_CONTAINER -e WORDPRESS_DB_NAME=$DB_NAME -e WORDPRESS_DB_USER=root -e WORDPRESS_DB_PASSWORD=$DB_PASSWORD -e WORDPRESS_TABLE_PREFIX=wp2_ --name $CONTAINER_NAME --network $WORDPRESS_NETWORK -v "$PWD/html_$CONTAINER_NAME":/var/www/html -d wordpress"
-    # Fetch and print the IP address of the new WordPress container
+    
+    echo "Retrieving IP address of the newly created WordPress container."
     IP_ADDRESS=$(sudo docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $CONTAINER_NAME)
     echo "WordPress container IP address: $IP_ADDRESS"
 
-    # Generate Nginx configuration
+    echo "Generating Nginx configuration."
     generate_nginx_config
 
-    # Obtain SSL certificate and configure Nginx for HTTPS
+    echo "Obtaining SSL certificate and updating Nginx configuration for HTTPS."
     sudo certbot --nginx --non-interactive --agree-tos --email contact@jojmagroup.com -d $DOMAIN_NAME --redirect
 
-    # Reload Nginx to apply changes
+    echo "Updating PHP configuration to set max upload size to 128MB."
+    echo "php_value upload_max_filesize 128M" >> "$PWD/html_$CONTAINER_NAME"
+    echo "php_value post_max_size 128M" >> "$PWD/html_$CONTAINER_NAME"
+    echo "php_value max_execution_time 300" >> "$PWD/html_$CONTAINER_NAME"
+    echo "php_value max_input_time 300" >> "$PWD/html_$CONTAINER_NAME"
+
+    echo "Reloading Nginx to apply new configurations."
     sudo nginx -s reload
+
+    echo "Container creation process completed."
 }
 
 # Function to generate Nginx configuration
@@ -63,7 +75,8 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name $DOMAIN_NAME;
-    
+    client_max_body_size 128M;
+
     # Proxy configuration
     location / {
         proxy_pass http://$IP_ADDRESS:80;
@@ -105,7 +118,7 @@ ls_containers() {
 }
 
 # Function to remove containers and configurations
-remove_containers() {
+remove_container() {
     # Stop and remove the WordPress container
     sudo docker stop "$CONTAINER_NAME"
     sudo docker rm "$CONTAINER_NAME"
@@ -156,11 +169,11 @@ if [ "$CREATE_FLAG" = true ]; then
         usage
         exit 1
     fi
-    create_containers
+    create_container
 elif [ "$REMOVE_FLAG" = true ]; then
     if [ -z "$CONTAINER_NAME" ]; then
         usage
         exit 1
     fi
-    remove_containers
+    remove_container
 fi
